@@ -1,0 +1,185 @@
+#include <PS2X_lib.h>
+#include <Servo.h>
+
+// ----- PS2 Pin Definitions -----
+#define PS2_DAT  24
+#define PS2_CMD  25
+#define PS2_SEL  26
+#define PS2_CLK  27
+
+#define pressures false
+#define rumble    false
+
+PS2X ps2x;
+Servo grabber;
+
+int error = 0;
+byte type = 0;
+byte vibrate = 0;
+
+// ----- Motor Pins -----
+#define IN1_F 2   // Left front
+#define IN2_F 3
+#define IN3_F 5   // Right front
+#define IN4_F 6
+#define IN1_B 7   // Left back
+#define IN2_B 8
+#define IN3_B 9   // Right back
+#define IN4_B 10
+
+// ----- Servo Pin -----
+#define SERVO_PIN 11
+
+// ----- Direction Constants -----
+#define DIR_FWD   1
+#define DIR_STOP  0
+#define DIR_BWD  -1
+
+// ----- Grabber State -----
+int grabPos   = 90;
+int openPos   = 140;
+int closePos  = -30;
+
+// -----------------------------------
+
+void setMotors(int leftDir, int rightDir) {
+
+  // LEFT FRONT (normal polarity)
+  if (leftDir == DIR_FWD) {
+    digitalWrite(IN1_F, HIGH);
+    digitalWrite(IN2_F, LOW);
+  } else if (leftDir == DIR_BWD) {
+    digitalWrite(IN1_F, LOW);
+    digitalWrite(IN2_F, HIGH);
+  } else {
+    digitalWrite(IN1_F, LOW);
+    digitalWrite(IN2_F, LOW);
+  }
+
+  // LEFT BACK
+  if (leftDir == DIR_FWD) {
+    digitalWrite(IN1_B, HIGH);
+    digitalWrite(IN2_B, LOW);
+  } else if (leftDir == DIR_BWD) {
+    digitalWrite(IN1_B, LOW);
+    digitalWrite(IN2_B, HIGH);
+  } else {
+    digitalWrite(IN1_B, LOW);
+    digitalWrite(IN2_B, LOW);
+  }
+
+  // RIGHT FRONT (reversed polarity)
+  if (rightDir == DIR_FWD) {
+    digitalWrite(IN3_F, LOW);
+    digitalWrite(IN4_F, HIGH);
+  } else if (rightDir == DIR_BWD) {
+    digitalWrite(IN3_F, HIGH);
+    digitalWrite(IN4_F, LOW);
+  } else {
+    digitalWrite(IN3_F, LOW);
+    digitalWrite(IN4_F, LOW);
+  }
+
+  // RIGHT BACK
+  if (rightDir == DIR_FWD) {
+    digitalWrite(IN3_B, LOW);
+    digitalWrite(IN4_B, HIGH);
+  } else if (rightDir == DIR_BWD) {
+    digitalWrite(IN3_B, HIGH);
+    digitalWrite(IN4_B, LOW);
+  } else {
+    digitalWrite(IN3_B, LOW);
+    digitalWrite(IN4_B, LOW);
+  }
+}
+
+void stopRobot() {
+  setMotors(DIR_STOP, DIR_STOP);
+}
+
+// -----------------------------------
+
+void setup() {
+  Serial.begin(57600);
+  delay(300);
+
+  error = ps2x.config_gamepad(PS2_CLK, PS2_CMD, PS2_SEL, PS2_DAT, pressures, rumble);
+
+  if (error == 0) Serial.println("PS2 controller connected.");
+  else Serial.println("PS2 ERROR — check wiring.");
+
+  type = ps2x.readType();
+  if (type == 1) Serial.println("DualShock controller found.");
+
+  pinMode(IN1_F, OUTPUT); pinMode(IN2_F, OUTPUT);
+  pinMode(IN3_F, OUTPUT); pinMode(IN4_F, OUTPUT);
+  pinMode(IN1_B, OUTPUT); pinMode(IN2_B, OUTPUT);
+  pinMode(IN3_B, OUTPUT); pinMode(IN4_B, OUTPUT);
+
+  grabber.attach(SERVO_PIN);
+  grabber.write(grabPos);
+
+  stopRobot();
+}
+
+// -----------------------------------
+
+void loop() {
+  // Attempt reconnect if controller is not responding
+  if (error != 0) {
+    stopRobot();
+    delay(500);
+    error = ps2x.config_gamepad(PS2_CLK, PS2_CMD, PS2_SEL, PS2_DAT, pressures, rumble);
+    if (error == 0) Serial.println("PS2 controller reconnected.");
+    return;
+  }
+
+  if (!ps2x.read_gamepad(false, vibrate)) {
+    Serial.println("Controller lost — retrying...");
+    stopRobot();
+    error = 1;
+    return;
+  }
+
+  // ----- Grabber (CROSS = open, CIRCLE = close) -----
+  bool moved = false;
+
+  if (ps2x.Button(PSB_CROSS)) {
+    if (grabPos < openPos) {
+      grabPos += 3;
+      if (grabPos > openPos) grabPos = openPos;
+      moved = true;
+    }
+  }
+
+  if (ps2x.Button(PSB_CIRCLE)) {
+    if (grabPos > closePos) {
+      grabPos -= 8;
+      if (grabPos < closePos) grabPos = closePos;
+      moved = true;
+    }
+  }
+
+  if (moved) grabber.write(grabPos);
+
+  // ----- Drive -----
+  int joyY = ps2x.Analog(PSS_LY);  // 0=up, 255=down
+
+  if (ps2x.Button(PSB_PAD_LEFT)) {
+    setMotors(DIR_BWD, DIR_FWD);
+  }
+  else if (ps2x.Button(PSB_PAD_RIGHT)) {
+    setMotors(DIR_FWD, DIR_BWD);
+  }
+  else if (joyY < 118) {
+    setMotors(DIR_FWD, DIR_FWD);
+  }
+  else if (joyY > 138) {
+    setMotors(DIR_BWD, DIR_BWD);
+  }
+  else {
+    stopRobot();
+  }
+
+  delay(20);
+}
